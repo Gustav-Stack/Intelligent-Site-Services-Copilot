@@ -15,7 +15,7 @@ Built as a portfolio project demonstrating applied LLM engineering, dashboard de
 ---
 ## DEMO
 
-![Demonstração do Projeto](https://github.com/Gustav-Stack/Intelligent-Site-Services-Copilot/blob/master/protype%20work%20for%20total%20site%20service%20(1).gif)
+![Demonstração do Projeto](https://github.com/Gustav-Stack/Intelligent-Site-Services-Copilot/blob/master/protype%20work%20for%20total%20site%20service%20%281%29.gif)
 
 
 ## Features
