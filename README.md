@@ -10,9 +10,13 @@ Built as a portfolio project demonstrating applied LLM engineering, dashboard de
 
 **Live demo**
 
-[https://site-services-copilot-320339449894.us-central1.run.app](https://site-services-copilot-320339449894.us-central1.run.app)
+[https://site-services-copilot-866129993555.us-central1.run.app](https://site-services-copilot-866129993555.us-central1.run.app)
 
 ---
+## DEMO
+
+![Demonstração do Projeto](https://github.com/Gustav-Stack/Intelligent-Site-Services-Copilot/blob/master/protype%20work%20for%20total%20site%20service%20(1).gif)
+
 
 ## Features
 
