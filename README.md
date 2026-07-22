@@ -1,25 +1,71 @@
+---
+
 # Intelligent Site Services Copilot
 
-A natural-language AI agent that lets non-technical staff query a PostgreSQL database — equipment fleet, projects, permits, clients, aggregate inventory — using plain English (or Portuguese) questions instead of SQL.
+An operations intelligence dashboard for a site-services company that combines **business dashboards**, **real-time operational KPIs**, and an **AI business analyst** capable of answering natural-language questions about the company's current performance.
 
-Built as a portfolio project to demonstrate applied LLM engineering: agentic SQL generation, defense-in-depth security around a database-connected agent, and a production deployment on Google Cloud.
+Instead of querying the database directly, the AI analyzes curated operational datasets already loaded by the application, providing insights, trend analysis and recommendations while remaining isolated from the production database.
 
-**🔗 Live demo:** https://site-services-copilot-320339449894.us-central1.run.app
+Built as a portfolio project demonstrating applied LLM engineering, dashboard design, data visualization, secure cloud deployment, and AI-assisted business intelligence.
 
-> Ask things like *"How many excavators are available right now?"* or *"List projects with pending permits"* and get a natural-language answer, the generated SQL, and — when the result is tabular — an auto-generated chart.
+**Live demo**
+
+[https://site-services-copilot-320339449894.us-central1.run.app](https://site-services-copilot-320339449894.us-central1.run.app)
 
 ---
 
-## Table of Contents
+## Features
 
-- [Architecture](#architecture)
-- [Tech Stack](#tech-stack)
-- [Security Model](#security-model)
-- [Database Schema](#database-schema)
-- [Running Locally](#running-locally)
-- [Deployment](#deployment-google-cloud-run)
-- [Design Decisions & Trade-offs](#design-decisions--trade-offs)
-- [Roadmap / Possible Extensions](#roadmap--possible-extensions)
+### Operational Dashboard
+
+* Equipment availability
+* Maintenance overview
+* Active and overdue projects
+* Pending permits
+* Low inventory alerts
+* Aggregate sales revenue
+* Revenue per project
+* Notification center with operational alerts
+
+---
+
+### Business Intelligence
+
+Interactive dashboards built with Plotly covering:
+
+* Revenue by service category
+* Monthly aggregate revenue
+* Top clients
+* Equipment utilization
+* Crew workload
+* Aggregate inventory
+* Historical pricing
+* Project portfolio
+* Permit status
+
+---
+
+### AI Business Analyst
+
+The application includes an AI assistant powered through OpenRouter.
+
+Users can ask questions such as:
+
+* "What's the overall state of the business today?"
+* "Which operational area needs immediate attention?"
+* "Show me the revenue trend."
+* "Which equipment should be prioritized?"
+
+The assistant:
+
+* analyzes the current dashboard data
+* produces business insights
+* recommends actions
+* automatically generates charts when appropriate
+
+Rather than giving the model database access, the application provides structured business datasets already loaded from PostgreSQL.
+
+This significantly reduces hallucination risk while improving security.
 
 ---
 
@@ -27,140 +73,271 @@ Built as a portfolio project to demonstrate applied LLM engineering: agentic SQL
 
 ```mermaid
 flowchart LR
-    U[User] -->|natural language question| ST[Streamlit UI<br/>app.py]
-    ST --> AG[LangChain SQL Agent<br/>tool-calling]
-    AG -->|reasons about schema| LLM[Gemini 2.5 Flash<br/>via Vertex AI]
-    LLM -->|generates SQL| AG
-    AG -->|SELECT only| GUARD{ReadOnlySQLDatabase<br/>code-level guard}
-    GUARD -->|blocked| BLOCK[⛔ Rejected]
-    GUARD -->|allowed| DB[(Cloud SQL<br/>PostgreSQL 16<br/>agent_readonly user)]
-    DB --> AG
-    AG -->|answer + SQL used| ST
-    ST -->|reruns SELECT for charting| DB
-    ST --> U
 
-    subgraph "Google Cloud Run (container)"
-        ST
-        AG
-    end
+User --> Streamlit
+
+Streamlit --> PostgreSQL
+
+PostgreSQL --> Dashboard
+
+Dashboard --> CachedData
+
+CachedData --> OpenRouter
+
+OpenRouter --> AI
+
+AI --> Dashboard
+
+Dashboard --> User
 ```
-
-**Request flow:**
-1. User asks a question in the Streamlit chat UI.
-2. A LangChain `create_sql_agent` (tool-calling agent) inspects the database schema and decides which SQL query answers the question.
-3. Gemini 2.5 Flash (called via Vertex AI, no API key — identity-based auth) generates the SQL.
-4. Before hitting the database, every query passes through a **read-only guard** implemented in code (see [Security Model](#security-model)).
-5. The result comes back through the agent, which formats a natural-language answer.
-6. The UI also surfaces the **exact SQL that was run** and, when the result has numeric columns, renders an automatic chart.
 
 ---
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| LLM | Gemini 2.5 Flash (Google Vertex AI) |
-| Agent framework | LangChain (`create_sql_agent`, tool-calling) |
-| Frontend | Streamlit |
-| Database | PostgreSQL 16 (Cloud SQL in production, Docker locally) |
-| DB connectivity (prod) | Cloud SQL Python Connector (`pg8000`, no public IP, no proxy) |
-| Data / charts | pandas, `st.bar_chart` / `st.line_chart` |
-| Deployment | Google Cloud Run (containerized, built via Cloud Build) |
-| Secrets | Google Secret Manager |
-| IAM | Dedicated Cloud Run service account (`aiplatform.user` + `cloudsql.client`, least-privilege) |
+| Layer            | Technology                                              |
+| ---------------- | ------------------------------------------------------- |
+| Frontend         | Streamlit                                               |
+| Charts           | Plotly Express                                          |
+| Data Processing  | pandas                                                  |
+| Database         | PostgreSQL 16                                           |
+| ORM / DB         | SQLAlchemy                                              |
+| Production DB    | Cloud SQL                                               |
+| Cloud Connector  | Cloud SQL Python Connector                              |
+| AI               | OpenRouter                                              |
+| Supported Models | GPT-4o Mini, Claude 3.5 Sonnet, Gemini Flash, Llama 3.1 |
+| Deployment       | Google Cloud Run                                        |
+| Secrets          | Secret Manager                                          |
 
 ---
 
-## Security Model
+## AI Architecture
 
-Running an LLM agent with direct database access is inherently risky — the model can be prompted into generating destructive SQL. This project uses **defense-in-depth**: two independent layers, so a failure in one doesn't compromise the database.
+Unlike database-connected LLM agents, this application follows a safer pattern.
 
-1. **Database-level:** a dedicated Postgres role, `agent_readonly`, is granted `SELECT` only, with default privileges also restricted to `SELECT` for any future tables. `INSERT`/`UPDATE`/`DELETE`/`TRUNCATE` are explicitly revoked. Even a full prompt-injection compromise of the LLM cannot write to the database, because the database user itself is incapable of writing.
-2. **Application-level:** a `ReadOnlySQLDatabase` class wraps LangChain's `SQLDatabase` and rejects, in code, any query that doesn't start with `SELECT` or that contains destructive keywords (`insert`, `update`, `delete`, `drop`, `alter`, `truncate`, `create`, `grant`, `revoke`) — before the query ever reaches Postgres.
+```
+Database
 
-Additional production hardening:
-- Database credentials are never hardcoded — they're injected via **Google Secret Manager** at deploy time.
-- The Cloud Run service runs under a **dedicated service account** with only the two IAM roles it needs (`roles/aiplatform.user`, `roles/cloudsql.client`) — not the broad default Compute Engine service account.
-- The database connects via the **Cloud SQL Python Connector**, which uses encrypted, IAM-authenticated connections instead of exposing a public IP.
+↓
+
+Aggregated SQL Queries
+
+↓
+
+Pandas DataFrames
+
+↓
+
+Business Context
+
+↓
+
+OpenRouter LLM
+
+↓
+
+Business Insights
+```
+
+The language model never executes SQL.
+
+Instead, it receives:
+
+* KPI summaries
+* aggregated datasets
+* sampled business tables
+
+This design greatly reduces the attack surface while allowing high-quality analytical responses.
 
 ---
 
-## Database Schema
+## Security
 
-Nine tables model a real site-services business (site prep, drilling & blasting, septic/water, aggregate supply):
+The project follows multiple security layers.
 
-`clients` · `projects` · `permits` · `equipment` · `service_categories` · `service_requests` · `aggregates` · `aggregate_price_history` · `aggregate_orders`
+### Read-only database
 
-Foreign keys tie projects to clients, permits/service requests to projects, and aggregate orders/price history to the aggregates catalog. Seed data (fictitious, modeled loosely after a real Ontario site-services company's catalog) populates all nine tables for demo purposes.
+The application connects using a dedicated PostgreSQL user with read-only permissions.
+
+### Cached queries
+
+Business indicators are cached to avoid unnecessary database access.
+
+### Environment variables
+
+Credentials are injected through environment variables or Secret Manager.
+
+### Cloud SQL Connector
+
+Production uses IAM-authenticated encrypted connections without exposing a public database endpoint.
+
+### AI Isolation
+
+The LLM has **no direct database access**.
+
+It only receives structured business context generated by the application.
+
+---
+
+## Dashboard Sections
+
+### Home
+
+Operational control center containing:
+
+* KPIs
+* alerts
+* notifications
+* inventory monitoring
+* operational health
+* revenue overview
+
+---
+
+### Business Intelligence
+
+Dedicated analytics page containing:
+
+* interactive Plotly dashboards
+* historical analysis
+* customer analytics
+* equipment metrics
+* financial metrics
+
+---
+
+### AI Assistant
+
+Conversational interface where managers can ask natural-language questions about current business performance.
+
+The assistant can also request automatic chart generation.
+
+---
+
+## Database
+
+The application uses nine relational tables:
+
+```
+clients
+
+projects
+
+permits
+
+equipment
+
+service_categories
+
+service_requests
+
+aggregates
+
+aggregate_orders
+
+aggregate_price_history
+```
+
+Seed data models a real site-services company including:
+
+* excavation
+* drilling
+* septic systems
+* water services
+* landscaping
+* aggregate sales
 
 ---
 
 ## Running Locally
 
 ```bash
-# 1. Clone and install dependencies
-git clone <this-repo>
+git clone <repo>
+
 cd intelligent-site-services-copilot
+
 pip install -r requirements.txt
 
-# 2. Start local Postgres (Docker)
 docker compose up -d
 
-# 3. Authenticate with Google Cloud (Vertex AI, no API key needed)
-gcloud auth application-default login
-
-# 4. Run the app
 streamlit run app.py
 ```
 
-The app defaults to a local TCP connection (`localhost:5432`) when `INSTANCE_CONNECTION_NAME` isn't set, so local development works without touching the Cloud SQL setup below.
+By default the application connects to a local PostgreSQL instance.
 
 ---
 
-## Deployment (Google Cloud Run)
+## Deployment
 
-The same `app.py` switches to the **Cloud SQL Python Connector** in production, based on the presence of the `INSTANCE_CONNECTION_NAME` environment variable — no code changes needed between environments.
+The application is containerized and deployed on Google Cloud Run.
 
-```bash
-# Build the image (uses the Dockerfile — not Buildpacks)
-gcloud builds submit --tag us-central1-docker.pkg.dev/PROJECT_ID/cloud-run-source-deploy/site-services-copilot .
+Production features include:
 
-# Deploy to Cloud Run
-gcloud run deploy site-services-copilot \
-  --image us-central1-docker.pkg.dev/PROJECT_ID/cloud-run-source-deploy/site-services-copilot \
-  --region us-central1 \
-  --service-account site-copilot-runner@PROJECT_ID.iam.gserviceaccount.com \
-  --add-cloudsql-instances PROJECT_ID:us-central1:site-services-db \
-  --set-env-vars "PROJECT_ID=...,LOCATION=us-central1,GEMINI_MODEL=gemini-2.5-flash,DB_USER=agent_readonly,DB_NAME=site_services,INSTANCE_CONNECTION_NAME=..." \
-  --set-secrets "DB_PASSWORD=db-password:latest" \
-  --allow-unauthenticated \
-  --memory 1Gi \
-  --timeout 300
-```
-
-Infrastructure setup (once): create the Cloud SQL instance, run `sql/01_schema.sql` → `sql/02_seed_data.sql` → `sql/03_create_readonly_user.sql`, store the `agent_readonly` password in Secret Manager, and grant the Cloud Run service account `roles/aiplatform.user` + `roles/cloudsql.client`.
+* Cloud SQL
+* Secret Manager
+* IAM service account
+* Cloud SQL Connector
+* automatic scaling
 
 ---
 
-## Design Decisions & Trade-offs
+## Design Decisions
 
-- **Vertex AI over Google AI Studio (API key):** chosen for identity-based auth (no key to leak or rotate manually) and closer alignment with how enterprise GCP deployments typically authenticate.
-- **`--source .` (Buildpacks) vs. explicit Docker build:** this project uses an explicit `Dockerfile` + `gcloud builds submit --tag ...` rather than Cloud Run's automatic source-to-container Buildpacks. Buildpacks auto-detect a WSGI/Flask entrypoint for `.py` files, which is wrong for a Streamlit app — an explicit Dockerfile guarantees the exact runtime and dependency set.
-- **Re-running the query for charts:** the LangChain agent only returns natural-language text, not structured data. Rather than parsing that text, the app re-executes the agent's last generated `SELECT` (through the same read-only guard) to get a proper `DataFrame` for charting. Trade-off: on multi-step agent reasoning (e.g., aggregation done partly in Python), the chart may not perfectly match the phrasing of the text answer — acceptable for a portfolio demo, but worth automated-testing before using this pattern in production.
-- **`gemini-2.5-flash` over larger models:** favors latency and cost for a chat-style interface; SQL generation over a well-documented 9-table schema doesn't need a larger model's reasoning depth.
+### Dashboard-first architecture
 
----
+Instead of allowing an LLM to generate SQL, the application loads business datasets through curated SQL queries and exposes them to the AI.
 
-## Roadmap / Possible Extensions
+Benefits:
 
-- Conversation memory (multi-turn follow-up questions referencing prior results)
-- Query result caching / rate limiting per user
-- Row-level security (e.g., restrict a client-facing version to their own projects only)
-- Automated evaluation set (question → expected SQL) to catch agent regressions
-- CI/CD pipeline (GitHub Actions → Cloud Build → Cloud Run) instead of manual deploys
+* safer
+* deterministic
+* lower latency
+* easier caching
+* predictable costs
 
 ---
 
-## License
+### Automatic chart generation
 
-MIT — feel free to fork and adapt for your own portfolio.
+The AI can optionally emit a small JSON specification describing a chart.
+
+The application validates that specification and renders the visualization using Plotly.
+
+This allows the LLM to request visualizations without generating executable code.
+
+---
+
+### Cached KPIs
+
+Dashboard metrics are cached using Streamlit's caching layer to minimize repeated database queries.
+
+---
+
+### Multi-model AI
+
+OpenRouter allows switching between several models without changing application code.
+
+Supported examples include:
+
+* GPT-4o Mini
+* Claude 3.5 Sonnet
+* Gemini Flash
+* Llama 3.1
+
+---
+
+## Future Improvements
+
+* Conversation memory
+* Authentication
+* User-specific dashboards
+* Role-based permissions
+* Forecasting models
+* Export to PDF/Excel
+* Scheduled reports
+* Natural-language filtering
+* Time-series forecasting
+* Real-time streaming metrics
+
+---
+
